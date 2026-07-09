@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Backtest BTCUSDT - EMA/RSI</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin-bottom: 20px; color: #58a6ff; }
+  h3 { font-size: 14px; color: #58a6ff; margin: 0 0 12px 0; }
+  .panel {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 14px;
+  }
+  label { font-size: 12px; color: #8b949e; display: block; margin-bottom: 4px; }
+  input, select {
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    color: #e6edf3;
+    padding: 8px;
+    font-size: 13px;
+  }
+  button {
+    margin-top: 18px;
+    margin-right: 10px;
+    background: #238636;
+    color: white;
+    border: none;
+    padding: 12px 22px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  button.secondary { background: #1f6feb; }
+  button.tertiary { background: #6e40c9; }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { background: #30363d; cursor: not-allowed; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .stat-box {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+  }
+  .stat-box .val { font-size: 20px; font-weight: 700; }
+  .stat-box .lbl { font-size: 11px; color: #8b949e; margin-top: 4px; }
+  .positive { color: #3fb950; }
+  .negative { color: #f85149; }
+  #status { font-size: 13px; color: #8b949e; margin-top: 10px; }
+  #webhookStatus, #telegramStatus { font-size: 12px; margin-top: 8px; }
+  canvas { max-height: 380px; }
+  #tradesTable { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+  #tradesTable th, #tradesTable td { padding: 6px 8px; border-bottom: 1px solid #30363d; text-align: right; }
+  #tradesTable th { color: #8b949e; text-align: right; }
+  #tradesTable td:first-child, #tradesTable th:first-child { text-align: left; }
+  .scroll { max-height: 260px; overflow-y: auto; }
+  progress { width: 100%; margin-top: 8px; height: 6px; }
+  .warn {
+    background: #3d2e00;
+    border: 1px solid #9e6a03;
+    color: #e3b341;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+
+<h1>📊 Backtest BTCUSDT — Stratégie EMA / RSI</h1>
+
+<div class="warn">
+  ⚠️ Ne mets jamais ta clé API secrète OKX ici — cette page tourne dans le navigateur et n'importe qui peut la voir. Utilise seulement le token Telegram (notifications) et un webhook vers ton propre serveur.
+</div>
+
+<div class="panel">
+  <div class="grid">
+    <div><label>Timeframe</label>
+      <select id="interval">
+        <option value="1m" selected>1 minute</option>
+        <option value="5m">5 minutes</option>
+        <option value="15m">15 minutes</option>
+        <option value="1h">1 heure</option>
+      </select>
+    </div>
+    <div><label>Nb bougies</label><input id="limit" type="number" value="20000" min="100" max="20000"></div>
+    <div><label>EMA rapide</label><input id="emaFast" type="number" value="50"></div>
+    <div><label>EMA lente</label><input id="emaSlow" type="number" value="100"></div>
+    <div><label>RSI longueur</label><input id="rsiLen" type="number" value="20"></div>
+    <div><label>RSI surachat</label><input id="rsiOB" type="number" value="61"></div>
+    <div><label>RSI survente</label><input id="rsiOS" type="number" value="34"></div>
+    <div><label>Stop Loss %</label><input id="slPct" type="number" step="0.01" value="0.7"></div>
+    <div><label>Take Profit %</label><input id="tpPct" type="number" step="0.01" value="0.8"></div>
+    <div><label>Activation trailing %</label><input id="trailAct" type="number" step="0.01" value="0.3"></div>
+    <div><label>Distance trailing %</label><input id="trailDist" type="number" step="0.01" value="0.6"></div>
+    <div><label>Risque du capital %</label><input id="riskPct" type="number" value="20"></div>
+    <div><label>Levier</label><input id="leverage" type="number" value="5"></div>
+    <div><label>Capital initial ($)</label><input id="capital" type="number" value="1000"></div>
+    <div><label>Commission broker % (aller-retour)</label><input id="commissionPct" type="number" step="0.01" value="0.05"></div>
+  </div>
+  <button id="runBtn" onclick="runBacktest()">▶ Lancer le backtest</button>
+  <div id="status">Prêt.</div>
+  <progress id="progressBar" value="0" max="100" style="display:none;"></progress>
+</div>
+
+<div class="panel">
+  <div class="stats" id="statsBox"></div>
+</div>
+
+<div class="panel">
+  <canvas id="equityChart"></canvas>
+</div>
+
+<div class="panel">
+  <h3>📩 Notification Telegram</h3>
+  <div class="grid">
+    <div><label>Bot Token</label><input id="tgToken" type="text" placeholder="123456:ABC-DEF..."></div>
+    <div><label>Chat ID</label><input id="tgChatId" type="text" placeholder="123456789"></div>
+  </div>
+  <button class="secondary" onclick="sendTelegramSummary()">📨 Envoyer le résumé sur Telegram</button>
+  <div id="telegramStatus"></div>
+</div>
+
+<div class="panel">
+  <h3>🔗 Webhook (vers ton propre serveur / bot — jamais vers OKX directement)</h3>
+  <div class="grid">
+    <div><label>URL du webhook</label><input id="webhookUrl" type="text" placeholder="https://ton-serveur.com/webhook"></div>
+  </div>
+  <button class="tertiary" onclick="testWebhook()">🧪 Tester le webhook</button>
+  <div id="webhookStatus"></div>
+</div>
+
+<div class="panel">
+  <h3>Historique des trades</h3>
+  <div class="scroll">
+    <table id="tradesTable">
+      <thead>
+        <tr><th>#</th><th>Sens</th><th>Entrée</th><th>Sortie</th><th>Raison</th><th>PnL % (net)</th></tr>
+      </thead>
+      <tbody id="tradesBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let chart = null;
+let lastStats = null; // conserve le dernier resultat pour l'envoi Telegram
+
+function ema(values, period) {
+  const k = 2 / (period + 1);
+  const out = [values[0]];
+  for (let i = 1; i < values.length; i++) {
+    out.push(values[i] * k + out[i - 1] * (1 - k));
+  }
+  return out;
+}
+
+function rsi(values, period) {
+  const deltas = [];
+  for (let i = 1; i < values.length; i++) deltas.push(values[i] - values[i - 1]);
+  const gains = deltas.map(d => Math.max(d, 0));
+  const losses = deltas.map(d => Math.max(-d, 0));
+
+  let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
+
+  const out = new Array(period + 1).fill(null);
+  for (let i = period; i < deltas.length; i++) {
+    avgGain = (avgGain * (period - 1) + gains[i]) / period;
+    avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
+    const rs = avgLoss === 0 ? Infinity : avgGain / avgLoss;
+    out.push(100 - 100 / (1 + rs));
+  }
+  return out;
+}
+
+async function fetchCandles(interval, totalWanted, onProgress) {
+  const MAX_PER_CALL = 1000;
+  let allCandles = [];
+  let endTime = Date.now();
+
+  while (allCandles.length < totalWanted) {
+    const remaining = totalWanted - allCandles.length;
+    const batchLimit = Math.min(MAX_PER_CALL, remaining);
+
+    const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&limit=${batchLimit}&endTime=${endTime}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Erreur API Binance : " + res.status);
+    const data = await res.json();
+
+    if (!data.length) break;
+
+    const batch = data.map(c => ({ time: c[0], close: parseFloat(c[4]) }));
+    allCandles = batch.concat(allCandles);
+
+    endTime = data[0][0] - 1;
+
+    if (onProgress) onProgress(Math.min(100, Math.round(allCandles.length / totalWanted * 100)));
+
+    if (data.length < batchLimit) break;
+  }
+
+  return allCandles;
+}
+
+function runStrategy(candles, params) {
+  const closes = candles.map(c => c.close);
+  const emaFast = ema(closes, params.emaFast);
+  const emaSlow = ema(closes, params.emaSlow);
+  const rsiVals = rsi(closes, params.rsiLen);
+
+  let capital = params.capital;
+  const equityCurve = [capital];
+  const trades = [];
+  let totalCommissionPaid = 0;
+
+  let position = null;
+
+  for (let i = Math.max(params.emaSlow, params.rsiLen) + 1; i < closes.length; i++) {
+    const price = closes[i];
+
+    if (position) {
+      if (position.side === "long") {
+        if (price > position.extreme) position.extreme = price;
+        const move = (price - position.entry) / position.entry;
+        if (!position.trailActive && move >= params.trailAct) position.trailActive = true;
+        if (position.trailActive) {
+          const newSl = position.extreme * (1 - params.trailDist);
+          position.sl = Math.max(position.sl, newSl);
+        }
+      } else {
+        if (price < position.extreme) position.extreme = price;
+        const move = (position.entry - price) / position.entry;
+        if (!position.trailActive && move >= params.trailAct) position.trailActive = true;
+        if (position.trailActive) {
+          const newSl = position.extreme * (1 + params.trailDist);
+          position.sl = Math.min(position.sl, newSl);
+        }
+      }
+
+      const hitSl = position.side === "long" ? price <= position.sl : price >= position.sl;
+      const hitTp = position.side === "long" ? price >= position.tp : price <= position.tp;
+
+      if (hitSl || hitTp) {
+        const pnlPct = position.side === "long"
+          ? (price - position.entry) / position.entry
+          : (position.entry - price) / position.entry;
+        const notional = capital * params.riskPct * params.leverage;
+
+        // Commission broker : appliquee a l'ouverture ET a la fermeture (aller-retour)
+        const commissionCost = notional * (params.commissionPct / 100) * 2;
+        totalCommissionPaid += commissionCost;
+
+        const pnlDollarGross = notional * pnlPct;
+        const pnlDollarNet = pnlDollarGross - commissionCost;
+        capital += pnlDollarNet;
+
+        const pnlPctNet = (pnlDollarNet / notional) * 100;
+
+        trades.push({
+          side: position.side, entry: position.entry, exit: price,
+          reason: hitTp ? "Take Profit" : "Stop / Trailing",
+          pnlPct: pnlPctNet
+        });
+        position = null;
+      }
+    } else {
+      const pf = emaFast[i - 1], cf = emaFast[i];
+      const ps = emaSlow[i - 1], cs = emaSlow[i];
+      const r = rsiVals[i];
+      if (r === null || r === undefined) { equityCurve.push(capital); continue; }
+
+      const longCross = pf <= ps && cf > cs;
+      const shortCross = pf >= ps && cf < cs;
+      const longSignal = longCross && r < params.rsiOB;
+      const shortSignal = shortCross && r > params.rsiOS;
+
+      if (longSignal) {
+        position = { side: "long", entry: price, sl: price * (1 - params.slPct), tp: price * (1 + params.tpPct), trailActive: false, extreme: price };
+      } else if (shortSignal) {
+        position = { side: "short", entry: price, sl: price * (1 + params.slPct), tp: price * (1 - params.tpPct), trailActive: false, extreme: price };
+      }
+    }
+
+    equityCurve.push(capital);
+  }
+
+  return { equityCurve, trades, finalCapital: capital, totalCommissionPaid };
+}
+
+function computeStats(result, initialCapital) {
+  const { trades, equityCurve, finalCapital, totalCommissionPaid } = result;
+  const wins = trades.filter(t => t.pnlPct > 0).length;
+  const winRate = trades.length ? (wins / trades.length * 100) : 0;
+  const totalReturn = ((finalCapital - initialCapital) / initialCapital) * 100;
+
+  let peak = equityCurve[0], maxDd = 0;
+  for (const v of equityCurve) {
+    if (v > peak) peak = v;
+    const dd = (peak - v) / peak * 100;
+    if (dd > maxDd) maxDd = dd;
+  }
+
+  return { totalTrades: trades.length, winRate, totalReturn, maxDd, finalCapital, totalCommissionPaid };
+}
+
+function renderStats(stats) {
+  const box = document.getElementById("statsBox");
+  const cls = v => v >= 0 ? "positive" : "negative";
+  box.innerHTML = `
+    <div class="stat-box"><div class="val">${stats.totalTrades}</div><div class="lbl">Trades</div></div>
+    <div class="stat-box"><div class="val">${stats.winRate.toFixed(1)}%</div><div class="lbl">Taux de réussite</div></div>
+    <div class="stat-box"><div class="val ${cls(stats.totalReturn)}">${stats.totalReturn.toFixed(2)}%</div><div class="lbl">Rendement total</div></div>
+    <div class="stat-box"><div class="val negative">-${stats.maxDd.toFixed(2)}%</div><div class="lbl">Drawdown max</div></div>
+    <div class="stat-box"><div class="val">$${stats.finalCapital.toFixed(2)}</div><div class="lbl">Capital final</div></div>
+    <div class="stat-box"><div class="val negative">-$${stats.totalCommissionPaid.toFixed(2)}</div><div class="lbl">Commissions payées</div></div>
+  `;
+}
+
+function renderChart(equityCurve) {
+  const ctx = document.getElementById("equityChart");
+  if (chart) chart.destroy();
+
+  const maxPoints = 2000;
+  let displayData = equityCurve;
+  if (equityCurve.length > maxPoints) {
+    const step = Math.ceil(equityCurve.length / maxPoints);
+    displayData = equityCurve.filter((_, i) => i % step === 0);
+  }
+
+  chart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: displayData.map((_, i) => i),
+      datasets: [{
+        label: "Courbe de capital ($)",
+        data: displayData,
+        borderColor: "#58a6ff",
+        backgroundColor: "rgba(88,166,255,0.1)",
+        fill: true,
+        pointRadius: 0,
+        borderWidth: 1.5,
+        tension: 0.1
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { labels: { color: "#e6edf3" } } },
+      scales: {
+        x: { ticks: { color: "#8b949e", maxTicksLimit: 10 }, grid: { color: "#21262d" } },
+        y: { ticks: { color: "#8b949e" }, grid: { color: "#21262d" } }
+      }
+    }
+  });
+}
+
+function renderTrades(trades) {
+  const body = document.getElementById("tradesBody");
+  const displayTrades = trades.slice(-500);
+  const offset = trades.length - displayTrades.length;
+  body.innerHTML = displayTrades.map((t, i) => `
+    <tr>
+      <td>${offset + i + 1}</td>
+      <td>${t.side === "long" ? "🟢 Long" : "🔴 Short"}</td>
+      <td>${t.entry.toFixed(2)}</td>
+      <td>${t.exit.toFixed(2)}</td>
+      <td>${t.reason}</td>
+      <td class="${t.pnlPct >= 0 ? 'positive' : 'negative'}">${t.pnlPct.toFixed(2)}%</td>
+    </tr>
+  `).join("");
+}
+
+async function runBacktest() {
+  const btn = document.getElementById("runBtn");
+  const status = document.getElementById("status");
+  const progressBar = document.getElementById("progressBar");
+  btn.disabled = true;
+  progressBar.style.display = "block";
+  progressBar.value = 0;
+  status.textContent = "Récupération des données BTCUSDT...";
+
+  try {
+    const interval = document.getElementById("interval").value;
+    const limit = parseInt(document.getElementById("limit").value);
+
+    const candles = await fetchCandles(interval, limit, (pct) => {
+      progressBar.value = pct;
+      status.textContent = `Téléchargement des bougies... ${pct}%`;
+    });
+
+    status.textContent = "Calcul de la stratégie...";
+
+    const params = {
+      emaFast: parseInt(document.getElementById("emaFast").value),
+      emaSlow: parseInt(document.getElementById("emaSlow").value),
+      rsiLen: parseInt(document.getElementById("rsiLen").value),
+      rsiOB: parseFloat(document.getElementById("rsiOB").value),
+      rsiOS: parseFloat(document.getElementById("rsiOS").value),
+      slPct: parseFloat(document.getElementById("slPct").value) / 100,
+      tpPct: parseFloat(document.getElementById("tpPct").value) / 100,
+      trailAct: parseFloat(document.getElementById("trailAct").value) / 100,
+      trailDist: parseFloat(document.getElementById("trailDist").value) / 100,
+      riskPct: parseFloat(document.getElementById("riskPct").value) / 100,
+      leverage: parseFloat(document.getElementById("leverage").value),
+      capital: parseFloat(document.getElementById("capital").value),
+      commissionPct: parseFloat(document.getElementById("commissionPct").value),
+    };
+
+    const result = runStrategy(candles, params);
+    const stats = computeStats(result, params.capital);
+    lastStats = { stats, interval, nbCandles: candles.length };
+
+    renderStats(stats);
+    renderChart(result.equityCurve);
+    renderTrades(result.trades);
+
+    status.textContent = `Terminé — ${candles.length} bougies analysées (${interval}).`;
+  } catch (err) {
+    status.textContent = "Erreur : " + err.message;
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    progressBar.style.display = "none";
+  }
+}
+
+// ===== TELEGRAM =====
+async function sendTelegramSummary() {
+  const statusEl = document.getElementById("telegramStatus");
+  const token = document.getElementById("tgToken").value.trim();
+  const chatId = document.getElementById("tgChatId").value.trim();
+
+  if (!token || !chatId) {
+    statusEl.textContent = "⚠️ Renseigne le Bot Token et le Chat ID.";
+    statusEl.className = "negative";
+    return;
+  }
+  if (!lastStats) {
+    statusEl.textContent = "⚠️ Lance d'abord un backtest.";
+    statusEl.className = "negative";
+    return;
+  }
+
+  const s = lastStats.stats;
+  const message =
+    `📊 Résumé Backtest BTCUSDT\n` +
+    `Timeframe: ${lastStats.interval} | Bougies: ${lastStats.nbCandles}\n` +
+    `Trades: ${s.totalTrades}\n` +
+    `Taux de réussite: ${s.winRate.toFixed(1)}%\n` +
+    `Rendement total: ${s.totalReturn.toFixed(2)}%\n` +
+    `Drawdown max: -${s.maxDd.toFixed(2)}%\n` +
+    `Commissions payées: $${s.totalCommissionPaid.toFixed(2)}\n` +
+    `Capital final: $${s.finalCapital.toFixed(2)}`;
+
+  try {
+    statusEl.textContent = "Envoi en cours...";
+    statusEl.className = "";
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text: message })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      statusEl.textContent = "✅ Résumé envoyé sur Telegram.";
+      statusEl.className = "positive";
+    } else {
+      statusEl.textContent = "❌ Erreur Telegram : " + (data.description || "inconnue");
+      statusEl.className = "negative";
+    }
+  } catch (err) {
+    statusEl.textContent = "❌ Erreur : " + err.message;
+    statusEl.className = "negative";
+  }
+}
+
+// ===== WEBHOOK (vers ton propre serveur, jamais vers OKX directement) =====
+async function testWebhook() {
+  const statusEl = document.getElementById("webhookStatus");
+  const url = document.getElementById("webhookUrl").value.trim();
+
+  if (!url) {
+    statusEl.textContent = "⚠️ Renseigne l'URL du webhook.";
+    statusEl.className = "negative";
+    return;
+  }
+
+  const payload = {
+    event: "test_signal",
+    symbol: "BTCUSDT",
+    timestamp: new Date().toISOString(),
+    message: "Ceci est un test de connexion depuis l'app de backtest."
+  };
+
+  try {
+    statusEl.textContent = "Envoi du test...";
+    statusEl.className = "";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    statusEl.textContent = res.ok
+      ? "✅ Webhook reçu (code " + res.status + ")."
+      : "⚠️ Webhook répondu avec le code " + res.status + ".";
+    statusEl.className = res.ok ? "positive" : "negative";
+  } catch (err) {
+    statusEl.textContent = "❌ Impossible d'atteindre le webhook (souvent un blocage CORS) : " + err.message;
+    statusEl.className = "negative";
+  }
+}
+
+window.addEventListener("load", runBacktest);
+</script>
+
+</body>
+</html>
